@@ -1036,3 +1036,244 @@ erDiagram
 ---
 
 This document is now complete as a submission-ready Stage 1 and Stage 2 design package.
+
+# Stage 3
+
+## 1. Scaling Challenge
+
+The notification platform has grown to 50,000 students and 5,000,000 notifications. The current query below is not suitable for production-scale access because it scans a large number of rows and does not leverage efficient indexing or pagination.
+
+```sql
+SELECT *
+FROM notifications
+WHERE studentID = 1042
+  AND isRead = false
+ORDER BY createdAt ASC;
+```
+
+## 2. Performance Issues in the Current Query
+
+The query suffers from the following issues:
+
+- It scans a large portion of the notifications table.
+- It filters on two columns without a supporting composite index.
+- It sorts by createdAt, which increases execution cost.
+- It fetches all columns with `SELECT *`, which adds unnecessary I/O.
+- It may become slow as the table grows and the workload increases.
+
+## 3. Recommended Database Design
+
+The schema should be adjusted to align with the notification model defined in Stages 1 and 2.
+
+### Recommended Columns
+
+| Column | Type | Purpose |
+|---|---|---|
+| notification_id | UUID or BIGINT | Unique identifier |
+| receiver_id | VARCHAR or BIGINT | Recipient of the notification |
+| sender_id | VARCHAR or BIGINT | Sender of the notification |
+| title | VARCHAR | Short notification title |
+| message | TEXT | Notification content |
+| type | VARCHAR | Notification category |
+| priority | VARCHAR | High/medium/low |
+| status | VARCHAR | sent/read/deleted |
+| is_read | BOOLEAN | Read state |
+| created_at | TIMESTAMP | Creation time |
+| updated_at | TIMESTAMP | Last update time |
+| expires_at | TIMESTAMP | Optional expiry time |
+| metadata | JSON | Additional structured data |
+
+## 4. Indexing Strategy
+
+To optimize the workload, the following indexes are recommended.
+
+### Primary Index
+
+```sql
+CREATE INDEX idx_notifications_receiver_is_read_created_at
+ON notifications (receiver_id, is_read, created_at);
+```
+
+### Additional Useful Indexes
+
+```sql
+CREATE INDEX idx_notifications_receiver_created_at
+ON notifications (receiver_id, created_at DESC);
+
+CREATE INDEX idx_notifications_receiver_is_read
+ON notifications (receiver_id, is_read);
+
+CREATE INDEX idx_notifications_expires_at
+ON notifications (expires_at);
+```
+
+### Why These Indexes Help
+
+- The composite index on `(receiver_id, is_read, created_at)` supports filtering by user and unread state while preserving ordering by creation time.
+- The secondary indexes improve lookup performance for common list and cleanup operations.
+- The expiry index helps with housekeeping and retention jobs.
+
+## 5. Optimized Query
+
+The query should be rewritten to select only the necessary columns and use pagination.
+
+```sql
+SELECT notification_id, title, message, type, priority, status, is_read, created_at
+FROM notifications
+WHERE receiver_id = '1042'
+  AND is_read = false
+ORDER BY created_at ASC
+LIMIT 20 OFFSET 0;
+```
+
+### Why This Is Better
+
+- It avoids unnecessary data transfer.
+- It reduces memory consumption.
+- It improves response time for paginated API requests.
+
+## 6. Pagination Strategy
+
+For large result sets, pagination should be enforced at the database layer.
+
+### Recommended Pattern
+
+- Use `LIMIT` and `OFFSET` for moderate-scale access.
+- Use keyset pagination for higher scale and better performance.
+
+### Keyset Pagination Example
+
+```sql
+SELECT notification_id, title, message, type, priority, status, is_read, created_at
+FROM notifications
+WHERE receiver_id = '1042'
+  AND is_read = false
+  AND created_at > '2026-06-25 10:30:00'
+ORDER BY created_at ASC
+LIMIT 20;
+```
+
+This approach avoids the performance penalty of skipping large offsets.
+
+## 7. Partitioning Strategy
+
+At this scale, partitioning should be considered.
+
+### Recommended Partitioning Approach
+
+- Partition by `receiver_id` for user-specific data locality.
+- Partition by `created_at` for retention and time-based cleanup.
+
+### Example Partition Design
+
+- Monthly partitions by `created_at` for historical data.
+- Separate hot partitions for recent notifications.
+
+## 8. Read/Write Optimization
+
+The system should separate hot read traffic from write traffic where possible.
+
+### Recommended Approach
+
+- Use primary database for writes.
+- Use read replica(s) for fetching notifications and unread counts.
+- Cache unread counts in Redis or a similar in-memory store.
+
+## 9. Caching Recommendations
+
+Caching can significantly reduce database load.
+
+### Suggested Cache Layers
+
+| Cache Type | Use Case |
+|---|---|
+| Application Cache | Recent notifications for active users |
+| Redis Cache | Unread count, latest notifications, user inbox summary |
+| CDN/Edge Cache | Static notification metadata if applicable |
+
+### Example Cache Strategy
+
+- Cache unread count for 30 to 60 seconds.
+- Cache the latest 20 notifications per user.
+- Invalidate cache on create, read, delete, and bulk read operations.
+
+## 10. Background Maintenance
+
+The system should run scheduled maintenance jobs.
+
+### Recommended Jobs
+
+- Delete expired notifications.
+- Archive old notifications.
+- Rebuild indexes if required.
+- Clean up orphaned read-state records.
+
+### Example Cleanup Query
+
+```sql
+DELETE FROM notifications
+WHERE expires_at < CURRENT_TIMESTAMP;
+```
+
+## 11. Queue-Based Processing
+
+For high-volume notification delivery, asynchronous processing is strongly recommended.
+
+### Recommended Pattern
+
+- Accept the API request quickly.
+- Enqueue the notification event to a queue such as RabbitMQ, Kafka, or AWS SQS.
+- Process delivery asynchronously in workers.
+
+This prevents the API layer from becoming a bottleneck during bursts of traffic.
+
+## 12. Monitoring and Observability
+
+Production systems should provide operational visibility.
+
+### Key Metrics
+
+- Query latency
+- CPU and memory usage
+- Database connections
+- Cache hit rate
+- Notification throughput per second
+- Failed deliveries
+- Unread notification count growth
+
+### Recommended Monitoring Tools
+
+- PostgreSQL/MySQL performance dashboards
+- Prometheus and Grafana
+- Application logs and structured tracing
+- Alerting for slow queries and high error rates
+
+## 13. Database Best Practices for Production
+
+The following best practices are essential for operating a notification system at this scale:
+
+- Use proper indexes on frequently queried columns.
+- Avoid `SELECT *` in production queries.
+- Use pagination and keyset pagination for inbox retrieval.
+- Normalize data and keep read-state data in a separate table if required.
+- Define clear retention policies for old notifications.
+- Use connection pooling and query optimization.
+- Monitor slow queries regularly.
+- Keep backups and disaster recovery procedures in place.
+- Use read replicas for non-critical read traffic.
+- Plan for horizontal scaling when the volume continues to grow.
+
+## 14. Recommended Final Query Pattern
+
+The production-ready version of the unread notification query should use the optimized composite index and pagination.
+
+```sql
+SELECT notification_id, title, message, type, priority, status, is_read, created_at
+FROM notifications
+WHERE receiver_id = '1042'
+  AND is_read = false
+ORDER BY created_at ASC
+LIMIT 20;
+```
+
+This design makes the system substantially more efficient while remaining aligned with the REST API and database schema created in Stages 1 and 2.
