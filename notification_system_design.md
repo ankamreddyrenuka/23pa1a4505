@@ -1175,6 +1175,122 @@ The following production-ready practices should be followed.
 
 This Stage 4 design provides a scalable, production-ready architecture for the notification platform and is ready for direct submission.
 
+# Stage 6
+
+## 1. Priority Inbox Requirement
+
+The notification platform should present a Priority Inbox that always shows the top N unread notifications. The priority should be determined by:
+
+- Notification type weight:
+  - Placement = Highest
+  - Result = Medium
+  - Event = Lowest
+- Recency: newer notifications receive higher priority when the type weight is equal.
+
+## 2. Recommended Solution
+
+A min-heap priority queue is the most suitable approach for continuously arriving notifications. It keeps only the best candidates for the top N list, which makes it efficient for high-volume inbox updates.
+
+## 3. Implementation Overview
+
+The working Node.js solution in the Stage 6 folder:
+
+- fetches notifications from the Notification API via GET
+- filters out read notifications
+- calculates a priority score using type weight and recency
+- uses a min-heap to maintain the top N unread notifications
+- returns the highest-priority notifications in sorted order
+
+## 4. Algorithm
+
+The algorithm works as follows:
+
+1. Fetch notifications from the API.
+2. For each notification, skip already-read messages.
+3. Compute a priority score.
+4. Insert the notification into a min-heap of size N.
+5. If the heap is full and a new notification has higher priority, replace the smallest entry.
+6. Return the heap contents sorted by priority.
+
+## 5. Why This Is Efficient
+
+A min-heap is efficient because it keeps only the top N candidates in memory and performs insertions and removals in $O(\log N)$ time. This makes it suitable for streams of continuously arriving notifications.
+
+## 6. Time Complexity
+
+| Operation | Complexity |
+|---|---:|
+| Insert a notification | $O(\log N)$ |
+| Maintain top N list | $O(\log N)$ |
+| Final sort of result | $O(N \log N)$ |
+
+## 7. Flowchart
+
+```mermaid
+flowchart TD
+    A[Fetch Notifications from API] --> B[Filter Unread]
+    B --> C[Calculate Priority Score]
+    C --> D[Insert Into Min Heap]
+    D --> E{Heap Size > N?}
+    E -- Yes --> F[Replace Lowest Priority Item]
+    E -- No --> G[Keep Item]
+    F --> H[Return Top N Notifications]
+    G --> H
+```
+
+## 8. Architecture Summary
+
+```text
+Frontend / Admin Client
+        |
+        v
+Notification API (GET /api/v1/notifications)
+        |
+        v
+Priority Inbox Service (Node.js)
+        |
+        v
+Min Heap / Priority Queue
+        |
+        v
+Top N Unread Notifications
+```
+
+## 9. Handling Newly Arriving Notifications
+
+The solution handles new notifications efficiently by processing each one in constant-time queue operations plus logarithmic heap maintenance. This avoids re-sorting the entire inbox every time a notification arrives.
+
+## 10. Running the Code
+
+### Prerequisites
+
+- Node.js installed
+- Internet access to the Notification API
+
+### Steps
+
+```bash
+cd stage6
+npm install
+node stage6.js
+```
+
+### Optional configuration
+
+```bash
+NOTIFICATION_API_URL=https://api.example.com/api/v1/notifications TOP_N=10 node stage6.js
+```
+
+## 11. Files Created
+
+- [stage6/package.json](stage6/package.json)
+- [stage6/stage6.js](stage6/stage6.js)
+- [stage6/utils/priorityQueue.js](stage6/utils/priorityQueue.js)
+
+## 12. Final Recommendation
+
+A min-heap based priority inbox is a production-ready solution for large and continuously updating notification feeds because it is efficient, scalable, and simple to maintain.
+
 # Stage 5
 
 ## 1. Scenario Overview
