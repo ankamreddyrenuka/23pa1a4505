@@ -1175,6 +1175,204 @@ The following production-ready practices should be followed.
 
 This Stage 4 design provides a scalable, production-ready architecture for the notification platform and is ready for direct submission.
 
+# Stage 5
+
+## 1. Scenario Overview
+
+When the HR clicks "Notify All", the system must deliver a single campaign notification to 50,000 students through two channels at the same time:
+
+- Email delivery
+- In-app notification delivery
+
+A simple loop-based implementation is not scalable because it sends messages one by one, which creates long response times, high database and network pressure, and poor fault tolerance.
+
+## 2. Why a Simple Loop-Based Implementation Is Not Scalable
+
+A naive implementation such as iterating through all 50,000 students and sending emails and app notifications directly in the request thread has several major drawbacks:
+
+| Problem | Impact |
+|---|---|
+| Sequential processing | Very slow for large broadcasts |
+| Long request time | Users experience timeouts or delayed responses |
+| High CPU and memory usage | The application server becomes overloaded |
+| Tight coupling | Email and notification services are blocked by one another |
+| Poor reliability | One failure can stop the whole broadcast |
+| Difficult retries | Partial failures are hard to recover safely |
+
+For a broadcast of this size, the system should be designed as an asynchronous, distributed workflow rather than a synchronous loop.
+
+## 3. Recommended Production Architecture
+
+The recommended architecture uses a message queue, background workers, batch processing, retries, a dead-letter queue, and real-time WebSocket delivery.
+
+### Core Components
+
+| Component | Role |
+|---|---|
+| Frontend | Triggers the broadcast request and displays delivery status |
+| API Gateway | Authenticates and routes the request |
+| Backend Service | Creates the broadcast job and publishes work to the queue |
+| Message Queue | Buffers jobs for reliable asynchronous processing |
+| Background Workers | Consume messages and deliver email and app notifications |
+| Email Service | Sends emails to recipients |
+| Notification Service | Persists in-app notifications and updates delivery status |
+| WebSocket Server | Pushes real-time updates to connected clients |
+| Database | Stores broadcast metadata, notification records, and audit logs |
+| Dead Letter Queue | Holds failed jobs for inspection and replay |
+
+## 4. Complete Notification Flow
+
+### Step-by-step flow
+
+1. HR triggers "Notify All" from the admin interface.
+2. The frontend sends a request to the backend API.
+3. The backend creates a broadcast job record in the database.
+4. The backend publishes a job message to a message queue.
+5. Background workers consume the job and split the recipients into batches.
+6. Workers send email jobs and in-app notification jobs to their respective processing queues.
+7. Email workers call the email service.
+8. Notification workers write records to the notification service and update delivery status.
+9. WebSocket events are emitted for each successful delivery or status update.
+10. Failed jobs are retried automatically.
+11. If a job repeatedly fails, it is moved to the DLQ for investigation.
+
+## 5. Architecture Diagram
+
+```mermaid
+flowchart LR
+    A[HR Admin UI] --> B[API Gateway]
+    B --> C[Broadcast Service]
+    C --> D[(Database)]
+    C --> E[Message Queue]
+    E --> F[Worker Pool 1 - Email]
+    E --> G[Worker Pool 2 - In-App]
+    F --> H[Email Service]
+    G --> I[Notification Service]
+    I --> J[(Database)]
+    I --> K[WebSocket Server]
+    K --> L[Student Frontend]
+    E --> M[DLQ]
+```
+
+## 6. Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant HR as HR Admin
+    participant UI as Frontend
+    participant API as Backend API
+    participant DB as Database
+    participant MQ as Message Queue
+    participant W1 as Email Worker
+    participant W2 as In-App Worker
+    participant ES as Email Service
+    participant NS as Notification Service
+    participant WS as WebSocket
+
+    HR->>UI: Click "Notify All"
+    UI->>API: POST /broadcasts
+    API->>DB: Create broadcast job
+    API->>MQ: Publish broadcast message
+    MQ->>W1: Deliver batch of recipients
+    MQ->>W2: Deliver batch of recipients
+    W1->>ES: Send email
+    W2->>NS: Create in-app notification
+    NS->>DB: Save notification record
+    NS->>WS: Emit real-time event
+    WS-->>UI: Update inbox instantly
+    alt Failure
+        W1->>MQ: Requeue job
+        W2->>MQ: Requeue job
+    end
+    opt Repeated failure
+        MQ->>MQ: Move to DLQ
+    end
+```
+
+## 7. Batch Processing Design
+
+Instead of processing 50,000 students one by one, the system should divide recipients into manageable batches.
+
+### Example batch strategy
+
+| Batch Size | Purpose |
+|---|---|
+| 100 to 500 recipients | Email delivery batches |
+| 500 to 1000 recipients | Notification persistence batches |
+| 10,000 recipients per job | Large-scale campaign fan-out |
+
+Batching improves throughput and reduces overhead. It also allows better load balancing across workers.
+
+## 8. Retry and Dead Letter Queue Strategy
+
+Reliability is critical for mass notification delivery.
+
+### Retry policy
+
+- Retry transient failures such as network timeouts or temporary service unavailability.
+- Use exponential backoff for retries.
+- Limit total attempts to avoid endless loops.
+
+### DLQ behavior
+
+- Move permanently failed jobs to a DLQ.
+- Keep failure metadata for audit and replay.
+- Allow manual or automated reprocessing later.
+
+## 9. Performance Improvements
+
+Compared with a simple loop-based approach, the queue-based design provides major improvements.
+
+| Area | Improvement |
+|---|---|
+| Throughput | Multiple workers process jobs in parallel |
+| Latency | API responds quickly because work is asynchronous |
+| Resource usage | The main application server remains responsive |
+| Throughput consistency | Batching reduces overhead and improves efficiency |
+| Recovery | Failed jobs can be retried without restarting the whole broadcast |
+
+## 10. Scalability
+
+The system can scale horizontally by adding more workers.
+
+### Scaling strategy
+
+- Add more consumers to the queue as traffic grows.
+- Use multiple partitions for high-volume topics if using Kafka.
+- Use autoscaling groups for worker instances in cloud environments.
+- Spread processing across multiple queue consumers to avoid bottlenecks.
+
+This architecture can easily support a much larger audience beyond 50,000 recipients.
+
+## 11. Fault Tolerance and Reliability
+
+The design is reliable because it decouples the broadcast request from the actual delivery work.
+
+### Fault-tolerance features
+
+- Queued jobs survive temporary application failures.
+- Retries handle transient errors.
+- DLQ protects the system from permanent failures.
+- Workers can be restarted independently.
+- The system can continue processing other jobs while some workers fail.
+
+## 12. Advantages of the Proposed Design
+
+The proposed design offers the following advantages:
+
+- High throughput for large-scale broadcasts
+- Low latency for the initiating request
+- Better resource isolation between API and delivery workers
+- Reliable retry and recovery handling
+- Stronger observability and monitoring
+- Support for real-time WebSocket updates
+- Easier horizontal scaling
+- Better operational resilience
+
+## 13. Final Summary and Recommendation
+
+A loop-based implementation is not suitable for notifying 50,000 students because it is slow, fragile, and resource-intensive. The best production-ready solution is an asynchronous, queue-based architecture with background workers, batch processing, retries, DLQ support, email delivery, notification persistence, and real-time WebSocket updates. This design is scalable, fault-tolerant, and appropriate for enterprise-grade notification campaigns.
+
 # Stage 3
 
 ## 1. Scaling Challenge
