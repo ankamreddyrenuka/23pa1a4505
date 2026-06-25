@@ -1037,6 +1037,144 @@ erDiagram
 
 This document is now complete as a submission-ready Stage 1 and Stage 2 design package.
 
+# Stage 4
+
+## 9. Recommended Solution
+
+The recommended production architecture for the notification platform is a layered, event-driven system that combines a modern frontend, an API gateway, scalable backend services, Redis for caching, a relational database for persistence, and a WebSocket server for real-time delivery.
+
+### Recommended Architecture Overview
+
+| Layer | Responsibility |
+|---|---|
+| Frontend | Displays notifications, handles real-time UI updates, and initiates API requests |
+| API Gateway | Handles authentication, routing, rate limiting, and request aggregation |
+| Backend | Validates requests, applies business rules, persists notifications, and publishes events |
+| Redis | Caches notification lists, unread counts, and recent activity |
+| Database | Stores durable notification records and read-state information |
+| WebSocket Server | Pushes real-time updates to connected clients |
+
+### Why This Architecture Is Preferred
+
+This architecture is preferred because it balances performance, scalability, and maintainability.
+
+- It supports high traffic and large inboxes efficiently.
+- It reduces database load through Redis caching.
+- It provides fast real-time delivery through WebSockets.
+- It separates concerns for easier maintenance and future scaling.
+- It supports horizontal scaling for both API and real-time services.
+
+### Alternative Approaches
+
+| Option | Strengths | Limitations |
+|---|---|---|
+| Direct database access from frontend | Simple | Not secure, poor scalability, weak separation of concerns |
+| Monolithic backend only | Easier to start with | Harder to scale and evolve for real-time delivery |
+| Event-driven microservices | Highly scalable | More complex to operate and maintain |
+
+The layered architecture is the best choice because it is production-ready, flexible, and suitable for both current and future growth.
+
+### Architecture Diagram
+
+```mermaid
+flowchart LR
+    A[Frontend] --> B[API Gateway]
+    B --> C[Backend Services]
+    C --> D[Redis]
+    C --> E[(Database)]
+    C --> F[WebSocket Server]
+    F --> A
+```
+
+## 10. Request Flow
+
+The following workflow describes how the system behaves in production.
+
+### Flow Overview
+
+1. User opens the application.
+2. Frontend checks Redis-backed cache or local UI cache for notification data.
+3. If cache exists, notifications are displayed immediately and a background refresh is triggered.
+4. If cache is missing, the frontend calls the backend API.
+5. The backend checks Redis.
+6. If Redis has a hit, cached data is returned.
+7. If Redis has a miss, the backend queries the database.
+8. The result is stored in Redis and returned to the client.
+9. When a new notification arrives, the backend updates the database.
+10. The Redis cache is updated or invalidated.
+11. The WebSocket server pushes the notification to the frontend.
+12. The frontend updates the UI instantly.
+
+### Request Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant API Gateway
+    participant Backend
+    participant Redis
+    participant Database
+    participant WebSocket
+
+    User->>Frontend: Open application
+    Frontend->>Redis: Check cached notifications
+    alt Cache hit
+        Redis-->>Frontend: Return cached notifications
+        Frontend-->>User: Show notifications immediately
+        Frontend->>Backend: Background refresh
+    else Cache miss
+        Frontend->>API Gateway: Request notifications
+        API Gateway->>Backend: Route request
+        Backend->>Redis: Check cache
+        alt Redis hit
+            Redis-->>Backend: Cached response
+            Backend-->>Frontend: Return cached data
+        else Redis miss
+            Backend->>Database: Query notifications
+            Database-->>Backend: Return notifications
+            Backend->>Redis: Store notifications in cache
+            Backend-->>Frontend: Return fresh data
+        end
+    end
+
+    Backend->>Database: Save new notification
+    Backend->>Redis: Update cache
+    Backend->>WebSocket: Broadcast notification event
+    WebSocket-->>Frontend: Push live update
+    Frontend-->>User: Display new notification instantly
+```
+
+## 11. Best Practices
+
+The following production-ready practices should be followed.
+
+| Practice | Benefit |
+|---|---|
+| Avoid unnecessary polling | Reduces load and improves user experience |
+| Use pagination | Keeps inbox requests efficient and scalable |
+| Use Redis | Speeds up repeated reads and reduces database pressure |
+| Cache unread count | Improves performance for inbox summaries |
+| Use WebSockets | Enables real-time delivery with low latency |
+| Background synchronization | Keeps cached data fresh without blocking the UI |
+| Connection pooling | Improves database efficiency under load |
+| Monitoring | Helps detect slow queries and service failures |
+| Metrics | Supports performance tuning and capacity planning |
+| Horizontal scaling | Allows the system to handle increased traffic |
+
+### Additional Production Recommendations
+
+- Use asynchronous workers for notification delivery.
+- Apply rate limiting at the gateway layer.
+- Use structured logging and correlation IDs.
+- Enforce authentication and authorization consistently.
+- Configure health checks and auto-scaling rules.
+- Monitor cache hit/miss rates and WebSocket connection health.
+
+---
+
+This Stage 4 design provides a scalable, production-ready architecture for the notification platform and is ready for direct submission.
+
 # Stage 3
 
 ## 1. Scaling Challenge
