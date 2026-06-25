@@ -862,3 +862,177 @@ The notification API should follow these production-ready practices:
 ---
 
 This document provides an industry-standard API design for the Notification Platform and is ready for submission.
+
+# Stage 2
+
+## 11. Sample Data
+
+The following sample data illustrates how users and notifications can be stored in a relational database.
+
+### Users Table
+
+```sql
+INSERT INTO users (user_id, email, full_name, role, created_at) VALUES
+('user_001', 'student1@example.com', 'Alice Johnson', 'student', '2026-01-01 09:00:00'),
+('user_002', 'student2@example.com', 'Bob Smith', 'student', '2026-01-02 09:00:00'),
+('user_003', 'admin@example.com', 'Admin User', 'admin', '2026-01-03 09:00:00');
+```
+
+### Notifications Table
+
+```sql
+INSERT INTO notifications (
+  notification_id,
+  receiver_id,
+  sender_id,
+  title,
+  message,
+  type,
+  priority,
+  status,
+  is_read,
+  created_at,
+  updated_at,
+  expires_at,
+  metadata
+) VALUES
+(
+  'notif_001',
+  'user_001',
+  'system',
+  'Placement Drive Reminder',
+  'Placement drive starts at 10:00 AM tomorrow.',
+  'placement',
+  'high',
+  'sent',
+  false,
+  '2026-06-25 10:30:00',
+  '2026-06-25 10:30:00',
+  '2026-06-27 10:30:00',
+  '{"campaign":"campus-recruitment"}'
+),
+(
+  'notif_002',
+  'user_001',
+  'system',
+  'Result Published',
+  'Your result has been published.',
+  'result',
+  'medium',
+  'sent',
+  false,
+  '2026-06-25 10:40:00',
+  '2026-06-25 10:40:00',
+  '2026-06-30 10:40:00',
+  '{"source":"student-portal"}'
+),
+(
+  'notif_003',
+  'user_002',
+  'system',
+  'Event Reminder',
+  'A campus event starts today.',
+  'event',
+  'medium',
+  'sent',
+  true,
+  '2026-06-25 10:50:00',
+  '2026-06-25 10:50:00',
+  '2026-06-26 10:50:00',
+  '{"location":"auditorium"}'
+);
+```
+
+### Read Status Table
+
+```sql
+INSERT INTO notification_read_status (notification_id, user_id, is_read, read_at) VALUES
+('notif_001', 'user_001', false, NULL),
+('notif_002', 'user_001', false, NULL),
+('notif_003', 'user_002', true, '2026-06-25 11:00:00');
+```
+
+## 12. Complete Request Flow
+
+The following describes how the core notification operations work internally.
+
+| Operation | Internal Flow |
+|---|---|
+| Create Notification | The client sends a POST request to /api/v1/notifications. The API validates the payload, authenticates the user, and creates a notification record in the database. A real-time event is then emitted to the WebSocket server for instant delivery. |
+| Store in Database | The backend service validates the request, maps the payload to the notification model, and persists it in the notifications table. Metadata and timestamps are also stored for tracking and lifecycle management. |
+| Read Notification | The client requests GET /api/v1/notifications/{id}. The backend verifies authorization, fetches the notification from the database, and returns the current state to the client. |
+| Mark Read | The client sends PATCH /api/v1/notifications/{id}/read. The backend updates the is_read flag and read timestamp, then broadcasts the update to the real-time channel if necessary. |
+| Delete Notification | The client sends DELETE /api/v1/notifications/{id}. The backend confirms ownership, removes the record from the database, and returns a success response. |
+
+### Internal Sequence
+
+```mermaid
+flowchart TD
+    A[Client Request] --> B[Authentication Middleware]
+    B --> C[Validation Layer]
+    C --> D[Notification Service]
+    D --> E[Database Repository]
+    E --> F[(Database)]
+    D --> G[Event Publisher]
+    G --> H[WebSocket Server]
+    H --> I[Frontend Client]
+```
+
+## 13. Best Practices
+
+The following database and API practices are recommended for a production-ready notification system:
+
+- Use indexed columns on receiver_id, created_at, status, and is_read.
+- Enforce foreign key constraints between users and notifications.
+- Use soft deletes for auditability when deletion must be reversible.
+- Store metadata as JSON or a structured document column when flexibility is required.
+- Set appropriate TTL or expiration rules for temporary notifications.
+- Use transactions for create-and-broadcast workflows where consistency is critical.
+- Keep read-state updates atomic and idempotent.
+- Use connection pooling and prepared statements for performance.
+- Back up notification data regularly and monitor database growth.
+- Apply pagination and filtering at the database layer for efficiency.
+
+## ER Diagram
+
+```mermaid
+erDiagram
+    USERS ||--o{ NOTIFICATIONS : receives
+    USERS ||--o{ NOTIFICATION_READ_STATUS : tracks
+    NOTIFICATIONS ||--o{ NOTIFICATION_READ_STATUS : has
+
+    USERS {
+      string user_id PK
+      string email
+      string full_name
+      string role
+      datetime created_at
+    }
+
+    NOTIFICATIONS {
+      string notification_id PK
+      string receiver_id FK
+      string sender_id
+      string title
+      string message
+      string type
+      string priority
+      string status
+      boolean is_read
+      datetime created_at
+      datetime updated_at
+      datetime expires_at
+      json metadata
+    }
+
+    NOTIFICATION_READ_STATUS {
+      string notification_id FK
+      string user_id FK
+      boolean is_read
+      datetime read_at
+    }
+```
+
+---
+
+This document is now complete as a submission-ready Stage 1 and Stage 2 design package.
